@@ -68,7 +68,10 @@ body {
   inset: 0;
   opacity: 0;
   visibility: hidden;
-  will-change: opacity;
+  /* Позицию и прозрачность целиком считает JS от позиции скролла,
+     никаких CSS-переходов здесь быть не должно */
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .panel__image {

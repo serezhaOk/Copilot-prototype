@@ -64,7 +64,7 @@
       from: from,
       to: Math.max(from, to),
       freeze: !!raw.freeze,
-      hold: raw.hold == null ? cfg.scroll.holdScreens : raw.hold,
+      pin: raw.pin == null ? cfg.scroll.pinScreens : raw.pin,
       lead: raw.lead == null ? null : raw.lead
     };
   }).sort(function (a, b) { return a.from - b.from; });
@@ -136,17 +136,31 @@
 
   /* ---------- Раскладка таймлайна по скроллу ---------- */
 
+  // Сколько скролла занимает въезд ассета в кадр (он же выезд).
+  // В режиме slide это ровно высота кадра на экране: ассет едет с той же
+  // скоростью, с какой крутится колесо, как на обычной странице.
+  function revealLength() {
+    if (cfg.scroll.reveal === 'fade') {
+      return (cfg.scroll.fadeScreens == null ? 0.4 : cfg.scroll.fadeScreens) * vh;
+    }
+    var ratio = cfg.scroll.slideRatio == null ? 1 : cfg.scroll.slideRatio;
+    return DESIGN_H * frameScale * ratio;
+  }
+
   // Скролл делится на отрезки двух типов:
-  //   play — переход между остановками, видео идёт быстро, контента нет
-  //   hold — остановка: видео ползёт по своему интервалу, на экране ассет
+  //   play — переход между остановками, видео идёт быстро, ассета нет
+  //   hold — остановка: видео ползёт по своему интервалу, ассет въезжает,
+  //          стоит и уезжает
   function layout() {
     vh = window.innerHeight;
     var pps = cfg.scroll.screensPerSecond * vh;
+    var reveal = revealLength();
     var segs = [];
     var y = 0;
     var t = 0;
+    var lastIndex = stops.length - 1;
 
-    stops.forEach(function (stop) {
+    stops.forEach(function (stop, i) {
       var from = Math.min(stop.from, duration);
       var to   = Math.min(stop.to, duration);
 
@@ -159,7 +173,13 @@
         y += len;
       }
 
-      var holdLen = stop.hold * vh;
+      // Первый ассет уже на месте в самом верху страницы — въезжать неоткуда.
+      // Последний, если упирается в конец ролика, остаётся внизу и не уезжает.
+      var enterLen = y <= 0 ? 0 : reveal;
+      var exitLen  = (i === lastIndex && duration - to <= 0.05) ? 0 : reveal;
+      var pinLen   = stop.pin * vh;
+      var holdLen  = enterLen + pinLen + exitLen;
+
       segs.push({
         type: 'hold',
         start: y,
@@ -167,7 +187,10 @@
         from: from,
         to: stop.freeze ? from : to,
         index: stop.index,
-        stop: stop
+        stop: stop,
+        enterLen: enterLen,
+        pinLen: pinLen,
+        exitLen: exitLen
       });
       y += holdLen;
       t = to;
@@ -184,14 +207,6 @@
     }
 
     y += (cfg.scroll.endPad || 0) * vh;
-
-    // Первая остановка начинается со скролла 0 — она не должна проявляться,
-    // контент виден сразу. Последняя, если упирается в конец, не гаснет.
-    segs.forEach(function (s) {
-      if (s.type !== 'hold') return;
-      s.noFadeIn  = s.start <= 1;
-      s.noFadeOut = s.start + s.len >= y - 1;
-    });
 
     segments = segs;
     totalScroll = y;
@@ -224,7 +239,7 @@
                     ' (' + seg.stop.name + ')';
     }
 
-    var fadePx = (cfg.scroll.fadeScreens || 0.4) * vh;
+    var slide = cfg.scroll.reveal !== 'fade';
 
     for (var j = 0; j < segments.length; j++) {
       var h = segments[j];
@@ -232,20 +247,32 @@
       var p = panels[h.index];
       if (!p) continue;
 
-      var opacity = 0;
-      if (y >= h.start && y <= h.start + h.len) {
-        // Появление и исчезновение — фиксированной длины в пикселях скролла,
-        // поэтому ощущаются одинаково при любой длине остановки
-        var f = Math.min(fadePx, h.len * 0.45);
+      // phase: -1 ассет целиком под кадром, 0 на месте, +1 ушёл над кадром
+      var phase = -1;
+      var inside = y >= h.start && y <= h.start + h.len;
+
+      if (inside) {
         var into = y - h.start;
-        var left = h.start + h.len - y;
-        var fin  = h.noFadeIn  || f <= 0 ? 1 : Math.min(1, into / f);
-        var fout = h.noFadeOut || f <= 0 ? 1 : Math.min(1, left / f);
-        opacity = Math.min(fin, fout);
+        if (h.enterLen > 0 && into < h.enterLen) {
+          phase = into / h.enterLen - 1;
+        } else if (h.exitLen > 0 && into > h.enterLen + h.pinLen) {
+          phase = (into - h.enterLen - h.pinLen) / h.exitLen;
+        } else {
+          phase = 0;
+        }
       }
 
-      p.style.opacity = opacity.toFixed(3);
-      p.style.visibility = opacity < 0.005 ? 'hidden' : 'visible';
+      if (slide) {
+        // Едет по вертикали ровно как обычный контент при скролле:
+        // снизу вверх, мимо кадра и дальше вверх
+        p.style.transform = 'translate3d(0,' + (-phase * DESIGN_H).toFixed(1) + 'px,0)';
+        p.style.opacity = '1';
+      } else {
+        p.style.transform = 'none';
+        p.style.opacity = (1 - Math.min(1, Math.abs(phase))).toFixed(3);
+      }
+
+      p.style.visibility = inside ? 'visible' : 'hidden';
     }
 
     var ratio = totalScroll > 0 ? y / totalScroll : 0;
