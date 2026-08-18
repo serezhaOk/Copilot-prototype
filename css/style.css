@@ -82,8 +82,29 @@ body {
   -webkit-user-drag: none;
 }
 
+/* ---------- Статичная шапка: поверх всего, всегда видна ---------- */
+
+.header {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.header__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* Клавиша H — посмотреть видео без ассетов */
-body.hide-assets .overlays { display: none; }
+body.hide-assets .overlays,
+body.hide-assets .header { display: none; }
 
 /* ---------- Дорожка скролла (высоту задаёт JS) ---------- */
 

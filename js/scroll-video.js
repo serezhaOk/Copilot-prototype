@@ -13,6 +13,7 @@
   var frame    = document.getElementById('frame');
   var track    = document.getElementById('scroll-track');
   var overlays = document.getElementById('overlays');
+  var header   = document.getElementById('header');
   var hint     = document.getElementById('hint');
   var missing  = document.getElementById('missing');
   var hud      = document.getElementById('hud');
@@ -63,7 +64,8 @@
       from: from,
       to: Math.max(from, to),
       freeze: !!raw.freeze,
-      hold: raw.hold == null ? cfg.scroll.holdScreens : raw.hold
+      hold: raw.hold == null ? cfg.scroll.holdScreens : raw.hold,
+      lead: raw.lead == null ? null : raw.lead
     };
   }).sort(function (a, b) { return a.from - b.from; });
 
@@ -103,6 +105,20 @@
     return el;
   });
 
+  /* ---------- Статичная шапка ---------- */
+
+  if (cfg.header && cfg.header.image) {
+    var headerImg = document.createElement('img');
+    headerImg.className = 'header__image';
+    headerImg.src = encodeURI(cfg.header.image);
+    headerImg.alt = 'header';
+    headerImg.draggable = false;
+    headerImg.decoding = 'async';
+    header.appendChild(headerImg);
+  } else {
+    header.remove();
+  }
+
   /* ---------- Масштаб кадра под окно ---------- */
 
   function fitFrame() {
@@ -135,7 +151,10 @@
       var to   = Math.min(stop.to, duration);
 
       if (from > t) {
-        var len = (from - t) * pps;
+        // Обычно длина перехода пропорциональна куску видео. Но если в этом
+        // куске ролик стоит на месте, пропорция даёт экраны пустого скролла —
+        // тогда длину задаём вручную через lead.
+        var len = stop.lead == null ? (from - t) * pps : stop.lead * vh;
         segs.push({ type: 'play', start: y, len: len, from: t, to: from });
         y += len;
       }
@@ -154,7 +173,7 @@
       t = to;
     });
 
-    if (duration > t) {
+    if (duration - t > 0.05) {
       // Хвост после последней остановки: там ролик уже просто угасает,
       // поэтому его длину можно задать напрямую, а не по секундам
       var tail = cfg.scroll.tailScreens == null
