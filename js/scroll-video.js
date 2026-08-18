@@ -1,6 +1,8 @@
 /* ---------------------------------------------------------------------------
-   Движок: привязывает позицию скролла к времени видео и показывает контент
-   на «остановках». Настройки — в js/timeline.js, здесь трогать ничего не нужно.
+   Движок прототипа: позиция скролла управляет временем видео, на заданных
+   интервалах поверх кадра появляются ассеты.
+
+   Настройки — в js/timeline.js. Здесь трогать ничего не нужно.
    --------------------------------------------------------------------------- */
 
 (function () {
@@ -8,132 +10,203 @@
 
   var cfg      = window.TIMELINE;
   var video    = document.getElementById('bg-video');
+  var frame    = document.getElementById('frame');
   var track    = document.getElementById('scroll-track');
   var overlays = document.getElementById('overlays');
-  var progress = document.getElementById('progress').firstElementChild;
   var hint     = document.getElementById('hint');
   var missing  = document.getElementById('missing');
   var hud      = document.getElementById('hud');
+  var progressEl = document.getElementById('progress');
+  var progressBar = progressEl.firstElementChild;
 
-  var stops = (cfg.stops || []).slice().sort(function (a, b) { return a.at - b.at; });
+  var FPS = cfg.video.fps || 30;
+  var DESIGN_W = cfg.design.width;
+  var DESIGN_H = cfg.design.height;
 
-  var duration   = cfg.video.fallbackDuration || 10;
-  var videoReady = false;
-  var segments   = [];
+  /* ---------- Тайминги вида '07_20' → секунды ---------- */
+
+  // Принимает число (секунды) или строку 'СС_КК' / 'ММ_СС_КК' / '7.5'
+  function parseTime(value) {
+    if (typeof value === 'number') return value;
+    if (value == null) return 0;
+
+    var s = String(value).trim().replace(/[:.\-\s]/g, '_');
+    var parts = s.split('_').filter(function (x) { return x !== ''; });
+
+    if (parts.length === 1) return parseFloat(parts[0]) || 0;
+    if (parts.length === 2) {
+      return (parseInt(parts[0], 10) || 0) + (parseInt(parts[1], 10) || 0) / FPS;
+    }
+    // ММ_СС_КК
+    return (parseInt(parts[0], 10) || 0) * 60 +
+           (parseInt(parts[1], 10) || 0) +
+           (parseInt(parts[2], 10) || 0) / FPS;
+  }
+
+  // Обратно: секунды → 'СС_КК' (для отладочной панели)
+  function formatTime(sec) {
+    var s = Math.floor(sec);
+    var f = Math.round((sec - s) * FPS);
+    if (f >= FPS) { s += 1; f -= FPS; }
+    return (s < 10 ? '0' : '') + s + '_' + (f < 10 ? '0' : '') + f;
+  }
+
+  /* ---------- Подготовка остановок ---------- */
+
+  var stops = (cfg.stops || []).map(function (raw, i) {
+    var from = parseTime(raw.from);
+    var to   = raw.to == null ? from : parseTime(raw.to);
+    return {
+      index: i,
+      name: raw.name || ('stop-' + (i + 1)),
+      image: raw.image || null,
+      from: from,
+      to: Math.max(from, to),
+      freeze: !!raw.freeze,
+      hold: raw.hold == null ? cfg.scroll.holdScreens : raw.hold
+    };
+  }).sort(function (a, b) { return a.from - b.from; });
+
+  var duration    = cfg.video.fallbackDuration || 10;
+  var videoReady  = false;
+  var segments    = [];
   var totalScroll = 0;
   var vh = window.innerHeight;
 
-  var targetTime  = 0;   // время видео, которое требует текущий скролл
-  var currentTime = 0;   // сглаженное время, которое реально выставляем видео
+  var targetTime  = 0;
+  var currentTime = 0;
   var activeStop  = -1;
   var segmentInfo = '—';
+  var frameScale  = 1;
 
-  /* ---------- 1. Разметка контента из конфига ---------- */
+  /* ---------- Разметка ассетов ---------- */
 
-  var panels = stops.map(function (stop, i) {
-    var el = document.createElement('section');
-    el.className = 'panel panel--' + (stop.align || 'center');
-    el.style.setProperty('--panel-width', (stop.width || 720) + 'px');
-    el.setAttribute('data-index', String(i));
+  var panels = stops.map(function (stop) {
+    var el = document.createElement('div');
+    el.className = 'panel';
+    el.setAttribute('data-name', stop.name);
 
     if (stop.image) {
       var img = document.createElement('img');
       img.className = 'panel__image';
-      img.src = stop.image;
-      img.alt = stop.title || '';
-      img.loading = i < 2 ? 'eager' : 'lazy';
+      // В именах файлов есть пробелы и тире — обязательно кодируем путь
+      img.src = encodeURI(stop.image);
+      img.alt = stop.name;
+      img.draggable = false;
+      // Первые два ассета грузим сразу, остальные — лениво
+      img.loading = stop.index < 2 ? 'eager' : 'lazy';
       img.decoding = 'async';
       el.appendChild(img);
-    }
-
-    if (stop.title || stop.text) {
-      var box = document.createElement('div');
-      box.className = 'panel__copy';
-      if (stop.title) {
-        var h = document.createElement('h2');
-        h.className = 'panel__title';
-        h.textContent = stop.title;
-        box.appendChild(h);
-      }
-      if (stop.text) {
-        var p = document.createElement('p');
-        p.className = 'panel__text';
-        p.textContent = stop.text;
-        box.appendChild(p);
-      }
-      el.appendChild(box);
     }
 
     overlays.appendChild(el);
     return el;
   });
 
-  /* ---------- 2. Раскладка таймлайна по скроллу ---------- */
+  /* ---------- Масштаб кадра под окно ---------- */
+
+  function fitFrame() {
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    var sx = w / DESIGN_W;
+    var sy = h / DESIGN_H;
+
+    frameScale = cfg.design.fit === 'cover' ? Math.max(sx, sy) : Math.min(sx, sy);
+
+    frame.style.width  = DESIGN_W + 'px';
+    frame.style.height = DESIGN_H + 'px';
+    frame.style.transform = 'translate(-50%, -50%) scale(' + frameScale + ')';
+  }
+
+  /* ---------- Раскладка таймлайна по скроллу ---------- */
 
   // Скролл делится на отрезки двух типов:
-  //   play — видео едет от одной секунды к другой
-  //   hold — видео стоит, на экране контент
+  //   play — переход между остановками, видео идёт быстро, контента нет
+  //   hold — остановка: видео ползёт по своему интервалу, на экране ассет
   function layout() {
     vh = window.innerHeight;
-    var pps = cfg.scroll.screensPerSecond * vh; // пикселей скролла на секунду видео
+    var pps = cfg.scroll.screensPerSecond * vh;
     var segs = [];
     var y = 0;
     var t = 0;
 
-    stops.forEach(function (stop, i) {
-      var at = Math.max(0, Math.min(stop.at, duration));
-      if (at > t) {
-        var len = (at - t) * pps;
-        segs.push({ type: 'play', start: y, len: len, from: t, to: at });
+    stops.forEach(function (stop) {
+      var from = Math.min(stop.from, duration);
+      var to   = Math.min(stop.to, duration);
+
+      if (from > t) {
+        var len = (from - t) * pps;
+        segs.push({ type: 'play', start: y, len: len, from: t, to: from });
         y += len;
-        t = at;
       }
-      var hold = (stop.hold == null ? 1 : stop.hold) * vh;
-      segs.push({ type: 'hold', start: y, len: hold, from: t, to: t, index: i });
-      y += hold;
+
+      var holdLen = stop.hold * vh;
+      segs.push({
+        type: 'hold',
+        start: y,
+        len: holdLen,
+        from: from,
+        to: stop.freeze ? from : to,
+        index: stop.index,
+        stop: stop
+      });
+      y += holdLen;
+      t = to;
     });
 
     if (duration > t) {
-      var tail = (duration - t) * pps;
+      // Хвост после последней остановки: там ролик уже просто угасает,
+      // поэтому его длину можно задать напрямую, а не по секундам
+      var tail = cfg.scroll.tailScreens == null
+        ? (duration - t) * pps
+        : cfg.scroll.tailScreens * vh;
       segs.push({ type: 'play', start: y, len: tail, from: t, to: duration });
       y += tail;
     }
 
     y += (cfg.scroll.endPad || 0) * vh;
 
+    // Первая остановка начинается со скролла 0 — она не должна проявляться,
+    // контент виден сразу. Последняя, если упирается в конец, не гаснет.
+    segs.forEach(function (s) {
+      if (s.type !== 'hold') return;
+      s.noFadeIn  = s.start <= 1;
+      s.noFadeOut = s.start + s.len >= y - 1;
+    });
+
     segments = segs;
     totalScroll = y;
-    // Высота дорожки = длина таймлайна + один экран, чтобы максимум scrollY == totalScroll
     track.style.height = (totalScroll + vh) + 'px';
     renderHudMarks();
   }
 
-  /* ---------- 3. Скролл -> время видео + прозрачность панелей ---------- */
+  /* ---------- Скролл → время видео и прозрачность ассетов ---------- */
 
   function resolve(scrollY) {
     var y = Math.max(0, Math.min(scrollY, totalScroll));
     var seg = segments[segments.length - 1];
 
     for (var i = 0; i < segments.length; i++) {
-      var s = segments[i];
-      if (y < s.start + s.len || i === segments.length - 1) { seg = s; break; }
+      if (y < segments[i].start + segments[i].len) { seg = segments[i]; break; }
     }
     if (!seg) return;
 
     var local = seg.len > 0 ? (y - seg.start) / seg.len : 1;
     local = Math.max(0, Math.min(1, local));
 
+    targetTime = seg.from + (seg.to - seg.from) * local;
+
     if (seg.type === 'play') {
-      targetTime = seg.from + (seg.to - seg.from) * local;
       activeStop = -1;
-      segmentInfo = 'play ' + seg.from.toFixed(2) + ' → ' + seg.to.toFixed(2);
+      segmentInfo = 'play ' + formatTime(seg.from) + ' → ' + formatTime(seg.to);
     } else {
-      targetTime = seg.from;
       activeStop = seg.index;
-      segmentInfo = 'hold @ ' + seg.from.toFixed(2) + ' (#' + (seg.index + 1) + ')';
+      segmentInfo = 'hold ' + formatTime(seg.from) + ' → ' + formatTime(seg.to) +
+                    ' (' + seg.stop.name + ')';
     }
 
-    // Прозрачность каждой панели считаем от её собственного hold-отрезка
+    var fadePx = (cfg.scroll.fadeScreens || 0.4) * vh;
+
     for (var j = 0; j < segments.length; j++) {
       var h = segments[j];
       if (h.type !== 'hold') continue;
@@ -142,53 +215,54 @@
 
       var opacity = 0;
       if (y >= h.start && y <= h.start + h.len) {
-        var lp = h.len > 0 ? (y - h.start) / h.len : 1;
-        var f = cfg.scroll.fade || 0.25;
-        if (lp < f)            opacity = lp / f;
-        else if (lp > 1 - f)   opacity = (1 - lp) / f;
-        else                   opacity = 1;
+        // Появление и исчезновение — фиксированной длины в пикселях скролла,
+        // поэтому ощущаются одинаково при любой длине остановки
+        var f = Math.min(fadePx, h.len * 0.45);
+        var into = y - h.start;
+        var left = h.start + h.len - y;
+        var fin  = h.noFadeIn  || f <= 0 ? 1 : Math.min(1, into / f);
+        var fout = h.noFadeOut || f <= 0 ? 1 : Math.min(1, left / f);
+        opacity = Math.min(fin, fout);
       }
-      opacity = Math.max(0, Math.min(1, opacity));
 
       p.style.opacity = opacity.toFixed(3);
-      p.style.transform = 'translate3d(0,' + ((1 - opacity) * 28).toFixed(1) + 'px,0)';
-      p.style.visibility = opacity < 0.01 ? 'hidden' : 'visible';
+      p.style.visibility = opacity < 0.005 ? 'hidden' : 'visible';
     }
 
     var ratio = totalScroll > 0 ? y / totalScroll : 0;
-    progress.style.transform = 'scaleX(' + ratio.toFixed(4) + ')';
-    hint.style.opacity = y < vh * 0.35 ? String(1 - y / (vh * 0.35)) : '0';
+    progressBar.style.transform = 'scaleX(' + ratio.toFixed(4) + ')';
+
+    if (hint) {
+      hint.style.opacity = y < vh * 0.4 ? String(Math.max(0, 1 - y / (vh * 0.4))) : '0';
+    }
   }
 
-  /* ---------- 4. Цикл отрисовки ---------- */
+  /* ---------- Цикл отрисовки ---------- */
 
   var lastSeek = -1;
 
-  function frame() {
+  function tick() {
     resolve(window.scrollY || window.pageYOffset || 0);
 
     var k = cfg.scroll.smoothing || 0.15;
     currentTime += (targetTime - currentTime) * k;
     if (Math.abs(targetTime - currentTime) < 0.004) currentTime = targetTime;
 
-    if (videoReady && Math.abs(currentTime - lastSeek) > 1 / 90) {
+    if (videoReady && Math.abs(currentTime - lastSeek) > 1 / (FPS * 3)) {
       lastSeek = currentTime;
       try { video.currentTime = currentTime; } catch (e) { /* видео ещё не готово */ }
     }
 
     updateHud();
-    requestAnimationFrame(frame);
+    requestAnimationFrame(tick);
   }
 
-  /* ---------- 5. Загрузка видео ---------- */
+  /* ---------- Загрузка видео ---------- */
 
   video.addEventListener('loadedmetadata', function () {
-    if (isFinite(video.duration) && video.duration > 0) {
-      duration = video.duration;
-    }
+    if (isFinite(video.duration) && video.duration > 0) duration = video.duration;
     videoReady = true;
     missing.hidden = true;
-    document.body.classList.add('has-video');
     layout();
     resolve(window.scrollY || 0);
   });
@@ -202,14 +276,14 @@
   }
 
   if (cfg.video.src) {
-    video.src = cfg.video.src;
+    video.src = encodeURI(cfg.video.src);
     video.load();
   } else {
     showMissing();
   }
 
-  // iOS не рисует кадры у видео, которое ни разу не проигрывалось.
-  // Пинаем его один раз на первом касании/клике.
+  // iOS не отдаёт кадры у видео, которое ни разу не проигрывалось —
+  // пинаем его один раз при первом действии пользователя
   function primeVideo() {
     if (!videoReady) return;
     var p = video.play();
@@ -221,38 +295,43 @@
   }
   window.addEventListener('touchstart', primeVideo, { passive: true });
   window.addEventListener('click', primeVideo);
-  window.addEventListener('scroll', primeVideo, { passive: true, once: false });
+  window.addEventListener('scroll', primeVideo, { passive: true });
 
-  /* ---------- 6. Отладочная панель ---------- */
+  /* ---------- Отладочная панель ---------- */
 
   var hudOn = false;
   var captured = [];
 
-  var hudTime = document.getElementById('hud-time');
-  var hudDur  = document.getElementById('hud-duration');
-  var hudScr  = document.getElementById('hud-scroll');
-  var hudProg = document.getElementById('hud-progress');
-  var hudSeg  = document.getElementById('hud-segment');
-  var hudStop = document.getElementById('hud-stop');
-  var hudMarks = document.getElementById('hud-marks');
+  var el = {
+    time:  document.getElementById('hud-time'),
+    tc:    document.getElementById('hud-tc'),
+    dur:   document.getElementById('hud-duration'),
+    scr:   document.getElementById('hud-scroll'),
+    prog:  document.getElementById('hud-progress'),
+    scale: document.getElementById('hud-scale'),
+    seg:   document.getElementById('hud-segment'),
+    stop:  document.getElementById('hud-stop'),
+    marks: document.getElementById('hud-marks')
+  };
 
   function updateHud() {
     if (!hudOn) return;
     var y = window.scrollY || 0;
-    hudTime.textContent = currentTime.toFixed(2);
-    hudDur.textContent  = duration.toFixed(2);
-    hudScr.textContent  = Math.round(y) + ' / ' + Math.round(totalScroll);
-    hudProg.textContent = (totalScroll ? Math.round((y / totalScroll) * 100) : 0) + '%';
-    hudSeg.textContent  = segmentInfo;
-    hudStop.textContent = activeStop >= 0 ? '#' + (activeStop + 1) : '—';
+    el.time.textContent  = currentTime.toFixed(2);
+    el.tc.textContent    = formatTime(currentTime);
+    el.dur.textContent   = duration.toFixed(2);
+    el.scr.textContent   = Math.round(y) + ' / ' + Math.round(totalScroll);
+    el.prog.textContent  = (totalScroll ? Math.round((y / totalScroll) * 100) : 0) + '%';
+    el.scale.textContent = frameScale.toFixed(3);
+    el.seg.textContent   = segmentInfo;
+    el.stop.textContent  = activeStop >= 0 ? stops[activeStop].name : '—';
   }
 
   function renderHudMarks() {
-    if (!hudMarks) return;
-    hudMarks.innerHTML = captured.length
-      ? '<b>Записанные тайминги:</b><br>' + captured.map(function (t, i) {
-          return '{ at: ' + t.toFixed(2) + ', hold: 1.2, image: \'assets/images/' +
-                 String(i + 1).padStart(2, '0') + '.png\' },';
+    if (!el.marks) return;
+    el.marks.innerHTML = captured.length
+      ? '<b>Записано:</b><br>' + captured.map(function (t) {
+          return "'" + formatTime(t) + "'  (" + t.toFixed(2) + ' с)';
         }).join('<br>')
       : '';
   }
@@ -261,39 +340,43 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     var key = e.key.toLowerCase();
 
-    if (key === 'd') {
-      hudOn = !hudOn;
-      hud.hidden = !hudOn;
-    }
+    if (key === 'd') { hudOn = !hudOn; hud.hidden = !hudOn; }
     if (key === 't') {
       captured.push(currentTime);
       captured.sort(function (a, b) { return a - b; });
-      hudOn = true;
-      hud.hidden = false;
+      hudOn = true; hud.hidden = false;
       renderHudMarks();
-      console.log('timing captured:', currentTime.toFixed(2));
+      console.log('тайминг:', formatTime(currentTime), '=', currentTime.toFixed(2), 'с');
     }
-    if (key === 'g') {
-      document.body.classList.toggle('show-grid');
-    }
+    if (key === 'g') document.body.classList.toggle('show-grid');
+    if (key === 'h') document.body.classList.toggle('hide-assets');
   });
 
-  /* ---------- 7. Старт ---------- */
+  /* ---------- Старт ---------- */
+
+  if (!cfg.ui || cfg.ui.hint === false) {
+    hint.remove();
+    hint = null;
+  }
+  if (!cfg.ui || cfg.ui.progress === false) {
+    progressEl.style.display = 'none';
+  }
 
   var resizeTimer;
   window.addEventListener('resize', function () {
+    fitFrame();
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       layout();
       resolve(window.scrollY || 0);
-    }, 120);
+    }, 100);
   });
 
-  // Страница всегда открывается с самого начала
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   window.scrollTo(0, 0);
 
+  fitFrame();
   layout();
   resolve(0);
-  requestAnimationFrame(frame);
+  requestAnimationFrame(tick);
 })();
