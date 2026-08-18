@@ -1,0 +1,7 @@
+.DS_Store
+Thumbs.db
+node_modules/
+*.log
+
+# Кадры генерируются локально скриптом — в репозиторий не кладём
+assets/frames/

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Scroll-driven video prototype</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Фон: видео на весь экран, не скроллится -->
+  <div class="stage" id="stage">
+    <video
+      id="bg-video"
+      class="stage__video"
+      preload="auto"
+      muted
+      playsinline
+      webkit-playsinline
+      disablepictureinpicture
+      disableremoteplayback
+    ></video>
+
+    <div class="stage__scrim" id="scrim"></div>
+
+    <!-- Сюда JS вставляет блоки контента из js/timeline.js -->
+    <div class="overlays" id="overlays"></div>
+
+    <!-- Подсказка «скролль вниз» на первом экране -->
+    <div class="hint" id="hint">
+      <span class="hint__text">Скролль</span>
+      <span class="hint__arrow"></span>
+    </div>
+
+    <!-- Прогресс-бар по всей длине сцены -->
+    <div class="progress" id="progress"><i></i></div>
+  </div>
+
+  <!-- Экран-заглушка, пока видео не залито -->
+  <div class="missing" id="missing">
+    <div class="missing__box">
+      <b>Видео не найдено</b>
+      <p>Положи файл сюда:</p>
+      <code id="missing-path">assets/video/main.mp4</code>
+      <p class="missing__hint">Скролл и появление контента работают и без видео — можно проверять тайминги.</p>
+    </div>
+  </div>
+
+  <!-- Дорожка скролла: её высоту задаёт JS -->
+  <div class="track" id="scroll-track"></div>
+
+  <!-- Отладочная панель: включается клавишей D -->
+  <div class="hud" id="hud" hidden>
+    <div class="hud__row"><span>video&nbsp;time</span><b id="hud-time">0.00</b></div>
+    <div class="hud__row"><span>duration</span><b id="hud-duration">0.00</b></div>
+    <div class="hud__row"><span>scroll</span><b id="hud-scroll">0</b></div>
+    <div class="hud__row"><span>progress</span><b id="hud-progress">0%</b></div>
+    <div class="hud__row"><span>segment</span><b id="hud-segment">—</b></div>
+    <div class="hud__row"><span>active stop</span><b id="hud-stop">—</b></div>
+    <div class="hud__hr"></div>
+    <div class="hud__keys">
+      <b>D</b> — панель &nbsp; <b>T</b> — записать тайминг &nbsp; <b>G</b> — сетка
+    </div>
+    <div class="hud__marks" id="hud-marks"></div>
+  </div>
+
+  <script src="js/timeline.js"></script>
+  <script src="js/scroll-video.js"></script>
+</body>
+</html>
