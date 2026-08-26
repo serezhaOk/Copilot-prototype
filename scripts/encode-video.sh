@@ -6,13 +6,17 @@
 #
 #   ./scripts/encode-video.sh assets/video/source/my-video.mov
 #
-# Результат: assets/video/main.mp4 (1080p) и assets/video/main-mobile.mp4 (720p)
+# Заодно обрезает кадр под макет 1440x900: исходник приходит шире.
+#
+# Результат: assets/video/main.mp4
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 SRC="${1:-}"
 OUT_DIR="assets/video"
-CRF="${CRF:-23}"
+CRF="${CRF:-18}"
+W="${W:-1440}"
+H="${H:-900}"
 
 if [[ -z "$SRC" ]]; then
   echo "Использование: $0 <путь-к-исходному-видео>"
@@ -38,25 +42,19 @@ ffprobe -v error -select_streams v:0 \
   -of default=noprint_wrappers=1 "$SRC" || true
 echo
 
-encode () {
-  local height="$1" out="$2"
-  echo "→ Кодирую ${height}p → ${out}"
-  ffmpeg -hide_banner -loglevel warning -stats -y -i "$SRC" \
-    -vf "scale=-2:${height}" \
-    -c:v libx264 -profile:v high -pix_fmt yuv420p \
-    -crf "$CRF" -preset slow \
-    -g 1 -keyint_min 1 -sc_threshold 0 \
-    -movflags +faststart \
-    -an \
-    "$out"
-}
-
-encode 1080 "$OUT_DIR/main.mp4"
-encode 720  "$OUT_DIR/main-mobile.mp4"
+echo "→ Кодирую ${W}x${H} → $OUT_DIR/main.mp4"
+ffmpeg -hide_banner -loglevel warning -stats -y -i "$SRC" \
+  -vf "scale=-2:${H},crop=${W}:${H}" \
+  -c:v libx264 -profile:v high -pix_fmt yuv420p \
+  -crf "$CRF" -preset slow \
+  -g 1 -keyint_min 1 -sc_threshold 0 \
+  -movflags +faststart \
+  -an \
+  "$OUT_DIR/main.mp4"
 
 echo
 echo "Готово:"
-ls -lh "$OUT_DIR"/main*.mp4
+ls -lh "$OUT_DIR/main.mp4"
 echo
-echo "Проверь размер файлов. Если 1080p получился тяжелее ~60 МБ —"
-echo "перезапусти с большим CRF, например:  CRF=27 $0 $SRC"
+echo "Если файл вышел тяжелее ~60 МБ — перезапусти с большим CRF:"
+echo "  CRF=22 $0 $SRC"
