@@ -2,8 +2,9 @@
 /* ---------------------------------------------------------------------------
    Локальный сервер для прототипа. Без зависимостей.
 
-       node scripts/serve.js          → http://localhost:8000
-       node scripts/serve.js 3000     → другой порт
+       node scripts/serve.js            → http://localhost:8000, корень репозитория
+       node scripts/serve.js 3000       → другой порт
+       node scripts/serve.js 3000 dist  → отдавать собранную папку dist
 
    Зачем свой, а не `python3 -m http.server`: питоновский не умеет Range-запросы,
    а без них браузер не может перематывать видео — оно намертво стоит на нулевой
@@ -15,8 +16,8 @@ const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 
-const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.argv[2]) || 8000;
+const ROOT = path.resolve(__dirname, '..', process.argv[3] || '.');
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -88,5 +89,6 @@ http.createServer((req, res) => {
   });
 }).listen(PORT, () => {
   console.log(`Прототип: http://localhost:${PORT}`);
+  console.log(`Отдаётся: ${ROOT}`);
   console.log('Остановить: Ctrl+C');
 });

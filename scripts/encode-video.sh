@@ -14,7 +14,7 @@ set -euo pipefail
 
 SRC="${1:-}"
 OUT_DIR="assets/video"
-CRF="${CRF:-18}"
+CRF="${CRF:-22}"
 W="${W:-1440}"
 H="${H:-900}"
 
@@ -56,5 +56,5 @@ echo
 echo "Готово:"
 ls -lh "$OUT_DIR/main.mp4"
 echo
-echo "Если файл вышел тяжелее ~60 МБ — перезапусти с большим CRF:"
-echo "  CRF=22 $0 $SRC"
+echo "Cloudflare Pages не принимает файлы тяжелее 25 МиБ."
+echo "Если не влезло — перезапусти с большим CRF:  CRF=25 $0 $SRC"
