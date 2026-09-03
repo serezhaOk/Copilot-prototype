@@ -5,83 +5,128 @@
        node scripts/build-dist.js
 
    Что делает:
-   - копирует только то, что нужно браузеру (исходник видео и доки не берёт)
-   - переименовывает ассеты в ASCII-безопасные имена и правит пути в конфиге:
-     в репозитории имена файлов с пробелами и длинным тире, для людей это
-     удобно, но на хостинге такие пути — лишний риск
+   - берёт только то, что нужно браузеру; исходник видео и доки не уезжают
+   - проверяет, что main.mp4 собран из того исходника, который лежит в репо
+   - подмешивает в имена ассетов хэш содержимого, чтобы новая версия видео
+     или картинки долетала до людей сразу, а не через неделю из кэша
+   - правит пути в конфиге под новые имена
    - кладёт _headers с кэшированием для Cloudflare Pages
    --------------------------------------------------------------------------- */
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
+const LIMIT = 25 * 1024 * 1024; // потолок Cloudflare Pages на файл
 
-function rm(p) { fs.rmSync(p, { recursive: true, force: true }); }
-function mkdir(p) { fs.mkdirSync(p, { recursive: true }); }
-function copy(from, to) { mkdir(path.dirname(to)); fs.copyFileSync(from, to); }
+const rm = p => fs.rmSync(p, { recursive: true, force: true });
+const mkdir = p => fs.mkdirSync(p, { recursive: true });
+const copy = (from, to) => { mkdir(path.dirname(to)); fs.copyFileSync(from, to); };
+const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const mb = n => (n / 1024 / 1024).toFixed(1) + ' МБ';
 
-// '01. framework. 00_00 – 03_00.png' -> '01-framework-00_00-03_00.png'
-function slug(name) {
-  const ext = path.extname(name);
-  return path.basename(name, ext)
-    .replace(/[^A-Za-z0-9_-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') + ext.toLowerCase();
+function fail(title, lines) {
+  console.error('\n' + title);
+  lines.forEach(l => console.error('  ' + l));
+  console.error('');
+  process.exit(1);
 }
+
+/* --- 1. Видео должно быть собрано из текущего исходника --------------------- */
+
+const VIDEO = 'assets/video/main.mp4';
+const SOURCE = 'assets/video/source/copilot-main-video.mp4';
+const STAMP = 'assets/video/main.source-sha.txt';
+
+if (!fs.existsSync(path.join(ROOT, VIDEO))) {
+  fail('Нет ' + VIDEO, [
+    'Сначала перекодируй исходник:',
+    './scripts/encode-video.sh ' + SOURCE
+  ]);
+}
+
+if (fs.existsSync(path.join(ROOT, SOURCE))) {
+  const now = sha(path.join(ROOT, SOURCE));
+  const was = fs.existsSync(path.join(ROOT, STAMP))
+    ? fs.readFileSync(path.join(ROOT, STAMP), 'utf8').trim()
+    : null;
+
+  if (was !== now) {
+    fail('Исходник видео поменялся, а main.mp4 остался прежним.', [
+      'Если выложить как есть, на сайте окажется старое видео.',
+      '',
+      'Перекодировать:  ./scripts/encode-video.sh ' + SOURCE,
+      '',
+      'На GitHub это делает само: Actions прогоняет перекодирование',
+      'и коммитит main.mp4 обратно. Дождись, пока экшен закончит,',
+      'и Cloudflare пересоберёт сайт следующей сборкой.'
+    ]);
+  }
+}
+
+/* --- 2. Статика как есть ---------------------------------------------------- */
 
 rm(DIST);
 mkdir(DIST);
 
-// 1. Статика как есть
 for (const f of ['index.html', 'css/style.css', 'js/scroll-video.js']) {
   copy(path.join(ROOT, f), path.join(DIST, f));
 }
 
-// 2. Видео
-const video = 'assets/video/main.mp4';
-if (!fs.existsSync(path.join(ROOT, video))) {
-  console.error('Нет ' + video + '. Сначала прогони scripts/encode-video.sh');
-  process.exit(1);
-}
-copy(path.join(ROOT, video), path.join(DIST, video));
+/* --- 3. Ассеты: безопасные имена и хэш содержимого -------------------------- */
 
-// 3. Ассеты с переименованием
-const IMG = 'assets/images';
+// '01. framework. 00_00 – 03_00.png' -> '01-framework-00_00-03_00.3f9a1c22.png'
+// Имена в репозитории с пробелами и длинным тире — людям удобно, хостингам
+// не всегда. Хэш в имени делает кэширование безопасным: поменялся файл —
+// поменялся адрес, и браузер обязан скачать новый.
+function distName(file) {
+  const ext = path.extname(file).toLowerCase();
+  const slug = path.basename(file, path.extname(file))
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${slug}.${sha(file).slice(0, 8)}${ext}`;
+}
+
 const map = new Map();
+
+const IMG = 'assets/images';
 for (const name of fs.readdirSync(path.join(ROOT, IMG))) {
   if (!/\.(png|jpe?g|webp|avif)$/i.test(name)) continue;
-  const to = slug(name);
-  map.set(`${IMG}/${name}`, `${IMG}/${to}`);
-  copy(path.join(ROOT, IMG, name), path.join(DIST, IMG, to));
+  const from = path.join(ROOT, IMG, name);
+  const to = `${IMG}/${distName(from)}`;
+  map.set(`${IMG}/${name}`, to);
+  copy(from, path.join(DIST, to));
 }
 
-// 4. Конфиг с переписанными путями
+const videoTo = `assets/video/${distName(path.join(ROOT, VIDEO))}`;
+map.set(VIDEO, videoTo);
+copy(path.join(ROOT, VIDEO), path.join(DIST, videoTo));
+
+/* --- 4. Конфиг с переписанными путями --------------------------------------- */
+
 let cfg = fs.readFileSync(path.join(ROOT, 'js/timeline.js'), 'utf8');
-for (const [from, to] of map) {
-  if (!cfg.includes(from)) continue;
-  cfg = cfg.split(from).join(to);
-}
+for (const [from, to] of map) cfg = cfg.split(from).join(to);
 mkdir(path.join(DIST, 'js'));
 fs.writeFileSync(path.join(DIST, 'js/timeline.js'), cfg);
 
-// Проверяем, что в конфиге не осталось путей к несуществующим файлам
 const missing = [...cfg.matchAll(/'(assets\/[^']+)'/g)]
   .map(m => m[1])
   .filter(p => !fs.existsSync(path.join(DIST, p)));
 if (missing.length) {
-  console.error('В сборке нет файлов, на которые ссылается конфиг:');
-  missing.forEach(p => console.error('  ' + p));
-  process.exit(1);
+  fail('В сборке нет файлов, на которые ссылается конфиг:', missing);
 }
 
-// 5. Заголовки для Cloudflare Pages
-fs.writeFileSync(path.join(DIST, '_headers'), `# Ассеты и видео версионируются вручную, можно кэшировать надолго
-/assets/*
-  Cache-Control: public, max-age=604800
+/* --- 5. Заголовки ----------------------------------------------------------- */
 
-# Разметку и код держим свежими, чтобы правки долетали сразу
+fs.writeFileSync(path.join(DIST, '_headers'), `# В именах ассетов зашит хэш содержимого: поменялся файл — поменялся адрес.
+# Поэтому их можно кэшировать навсегда, обновления всё равно долетают сразу.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Разметка и код адресов не меняют, их держим свежими
 /
   Cache-Control: public, max-age=0, must-revalidate
 /index.html
@@ -92,8 +137,10 @@ fs.writeFileSync(path.join(DIST, '_headers'), `# Ассеты и видео ве
   Cache-Control: public, max-age=0, must-revalidate
 `);
 
-// Отчёт
-let total = 0, biggest = { name: '', size: 0 };
+/* --- 6. Отчёт --------------------------------------------------------------- */
+
+let total = 0;
+let biggest = { name: '', size: 0 };
 (function walk(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
@@ -104,14 +151,14 @@ let total = 0, biggest = { name: '', size: 0 };
   }
 })(DIST);
 
-const mb = n => (n / 1024 / 1024).toFixed(1) + ' МБ';
 console.log('Готово: dist/');
-console.log('  файлов больше всего весит:', biggest.name, mb(biggest.size));
-console.log('  всего:', mb(total));
+console.log('  видео:  ' + videoTo);
+console.log('  тяжелее всего: ' + biggest.name + '  ' + mb(biggest.size));
+console.log('  всего:  ' + mb(total));
 
-const LIMIT = 25 * 1024 * 1024;
 if (biggest.size > LIMIT) {
-  console.error(`\nСамый большой файл больше 25 МиБ — Cloudflare Pages его не примет.`);
-  console.error('Перекодируй видео полегче:  CRF=25 ./scripts/encode-video.sh assets/video/source/copilot-main-video.mp4');
-  process.exit(1);
+  fail('Файл больше 25 МиБ — Cloudflare Pages его не примет.', [
+    'Перекодируй видео полегче:',
+    'CRF=25 ./scripts/encode-video.sh ' + SOURCE
+  ]);
 }

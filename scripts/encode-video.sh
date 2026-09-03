@@ -52,9 +52,23 @@ ffmpeg -hide_banner -loglevel warning -stats -y -i "$SRC" \
   -an \
   "$OUT_DIR/main.mp4"
 
+# Запоминаем, из какого именно исходника собран main.mp4. По этой отметке
+# сборка понимает, что видео перекодировать забыли, и не выкладывает старое.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$SRC" | cut -d" " -f1 > "$OUT_DIR/main.source-sha.txt"
+else
+  shasum -a 256 "$SRC" | cut -d" " -f1 > "$OUT_DIR/main.source-sha.txt"
+fi
+
 echo
 echo "Готово:"
 ls -lh "$OUT_DIR/main.mp4"
 echo
-echo "Cloudflare Pages не принимает файлы тяжелее 25 МиБ."
-echo "Если не влезло — перезапусти с большим CRF:  CRF=25 $0 $SRC"
+
+SIZE=$(wc -c < "$OUT_DIR/main.mp4")
+LIMIT=$((25 * 1024 * 1024))
+if [[ "$SIZE" -gt "$LIMIT" ]]; then
+  echo "ВНИМАНИЕ: файл больше 25 МиБ, Cloudflare Pages его не примет." >&2
+  echo "Перезапусти полегче:  CRF=25 $0 $SRC" >&2
+  exit 1
+fi

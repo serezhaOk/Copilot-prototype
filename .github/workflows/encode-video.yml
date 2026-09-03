@@ -1,0 +1,54 @@
+# Перекодирует видео, как только в репозиторий заливают новый исходник.
+#
+# Зачем: прототип играет assets/video/main.mp4 — вариант с ключевым кадром
+# на каждом кадре, без него перемотка скроллом дёргается. Собирать его руками
+# каждый раз не нужно: залил исходник в assets/video/source/ — экшен сам
+# перекодирует и закоммитит результат обратно. Cloudflare Pages увидит коммит
+# и пересоберёт сайт.
+
+name: Перекодировать видео
+
+on:
+  push:
+    paths:
+      - 'assets/video/source/**'
+      - 'scripts/encode-video.sh'
+      - '.github/workflows/encode-video.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: encode-video-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  encode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверить ffmpeg
+        run: ffmpeg -version | head -1
+
+      - name: Перекодировать
+        run: ./scripts/encode-video.sh assets/video/source/copilot-main-video.mp4
+
+      - name: Собрать dist, чтобы поймать ошибки до деплоя
+        run: node scripts/build-dist.js
+
+      - name: Закоммитить, если что-то изменилось
+        run: |
+          if git diff --quiet -- assets/video/main.mp4 assets/video/main.source-sha.txt; then
+            echo "Видео не изменилось, коммитить нечего."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/video/main.mp4 assets/video/main.source-sha.txt
+          git commit -m "Перекодировал видео под перемотку скроллом
+
+          Собрано автоматически из assets/video/source/ скриптом
+          scripts/encode-video.sh."
+          git push
