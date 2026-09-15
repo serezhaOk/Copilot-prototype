@@ -105,6 +105,82 @@ body {
   -webkit-user-drag: none;
 }
 
+
+/* ---------- Горизонтальная галерея внутри остановки ---------- */
+
+/* Размеры и координаты вещей задаёт JS из конфига — в координатах кадра
+   1440x900, поэтому галерея масштабируется вместе с ним. */
+.gallery {
+  position: absolute;
+  inset: 0;
+  /* По умолчанию сквозная: ловит мышь, только когда раздел раскрыт целиком */
+  pointer-events: none;
+}
+
+.gallery.is-enabled { pointer-events: auto; cursor: grab; }
+.gallery.is-dragging { cursor: grabbing; }
+
+/* Дорожка — точка отсчёта по центру кадра, вещи расставлены от неё */
+.gallery__track {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 100%;
+  transform: translateX(0);
+  transition: transform .55s cubic-bezier(.22, .61, .36, 1);
+  will-change: transform;
+}
+
+.gallery__item { position: absolute; }
+
+.gallery__thing {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Плашка с описанием: видна только у той вещи, что стоит по центру */
+.gallery__plate {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  height: auto;
+  display: block;
+  opacity: 0;
+  transition: opacity .3s ease;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.gallery__item.is-active .gallery__plate { opacity: 1; }
+
+/* Подсказка: гаснет насовсем после первого перелистывания */
+/* Под плашкой места нет, поэтому подсказка живёт в пустом углу справа */
+.gallery__hint {
+  position: absolute;
+  right: 56px;
+  top: 104px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  background: rgba(12, 12, 14, .5);
+  backdrop-filter: blur(10px);
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .8);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .4s ease;
+}
+
+.gallery.is-enabled .gallery__hint { opacity: 1; }
+.gallery__hint.is-gone { opacity: 0 !important; }
+
 /* Клавиша H — посмотреть видео без ассетов */
 body.hide-assets .overlays,
 body.hide-assets .header { display: none; }

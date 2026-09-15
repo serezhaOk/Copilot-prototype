@@ -65,7 +65,8 @@
       to: Math.max(from, to),
       freeze: !!raw.freeze,
       pin: raw.pin == null ? cfg.scroll.pinScreens : raw.pin,
-      lead: raw.lead == null ? null : raw.lead
+      lead: raw.lead == null ? null : raw.lead,
+      gallery: raw.gallery || null
     };
   }).sort(function (a, b) { return a.from - b.from; });
 
@@ -80,6 +81,186 @@
   var activeStop  = -1;
   var segmentInfo = '—';
   var frameScale  = 1;
+
+  /* ---------- Горизонтальная галерея ----------
+
+     Живёт внутри остановки и включается, только когда её ассет на экране.
+     Вертикальный скролл не трогает принципиально: колесо перехватывается
+     только при горизонтальном жесте, перетаскивание — только если рука
+     ушла вбок сильнее, чем вверх-вниз. Всё остальное уходит странице.
+     ------------------------------------------------------------------- */
+
+  var galleries = [];
+  var galleryByStop = [];
+
+  function buildGallery(panelEl, stop) {
+    var g = stop.gallery;
+    var items = g.items || [];
+    var step = g.step || 700;
+    var itemW = g.itemWidth || 690;
+    var itemTop = g.itemTop || 0;
+    var plateW = g.plateWidth || 400;
+    var plateOffset = (g.plateTop || 0) - itemTop;
+
+    var root = document.createElement('div');
+    root.className = 'gallery';
+
+    var track = document.createElement('div');
+    track.className = 'gallery__track';
+    root.appendChild(track);
+
+    var active = 0;
+    var enabled = false;
+    var used = false;
+    var dragged = false;
+
+    var hintEl = null;
+    if (g.hint) {
+      hintEl = document.createElement('div');
+      hintEl.className = 'gallery__hint';
+      hintEl.textContent = g.hint;
+      root.appendChild(hintEl);
+    }
+
+    var nodes = items.map(function (it, i) {
+      var cell = document.createElement('div');
+      cell.className = 'gallery__item';
+      cell.style.width = itemW + 'px';
+      cell.style.left = (i * step - itemW / 2) + 'px';
+      cell.style.top = itemTop + 'px';
+
+      var thing = document.createElement('img');
+      thing.className = 'gallery__thing';
+      thing.src = encodeURI(it.image);
+      thing.alt = it.name || '';
+      thing.draggable = false;
+      thing.decoding = 'async';
+      cell.appendChild(thing);
+
+      if (it.plate) {
+        var plate = document.createElement('img');
+        plate.className = 'gallery__plate';
+        plate.src = encodeURI(it.plate);
+        plate.alt = '';
+        plate.draggable = false;
+        plate.decoding = 'async';
+        plate.style.width = plateW + 'px';
+        plate.style.top = plateOffset + 'px';
+        cell.appendChild(plate);
+      }
+
+      cell.addEventListener('click', function () {
+        // Клик, которым закончилось перетаскивание, не считаем
+        if (!enabled || dragged) return;
+        if (i !== active) setActive(i);
+      });
+
+      track.appendChild(cell);
+      return cell;
+    });
+
+    function setActive(i) {
+      active = Math.max(0, Math.min(items.length - 1, i));
+      track.style.transition = '';
+      track.style.transform = 'translateX(' + (-active * step) + 'px)';
+      for (var k = 0; k < nodes.length; k++) {
+        nodes[k].classList.toggle('is-active', k === active);
+      }
+      if (!used && hintEl) {
+        used = true;
+        hintEl.classList.add('is-gone');
+      }
+    }
+
+    /* --- перетаскивание --- */
+
+    var dragging = false, decided = false;
+    var startX = 0, startY = 0, baseX = 0, pointerId = null;
+
+    root.addEventListener('pointerdown', function (e) {
+      if (!enabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      dragging = true;
+      decided = false;
+      dragged = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      baseX = -active * step;
+      pointerId = e.pointerId;
+    });
+
+    window.addEventListener('pointermove', function (e) {
+      if (!dragging || e.pointerId !== pointerId) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+
+      if (!decided) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        // Ушли больше вверх-вниз — это скролл страницы, отпускаем
+        if (Math.abs(dy) >= Math.abs(dx)) { dragging = false; return; }
+        decided = true;
+        root.classList.add('is-dragging');
+        try { root.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+
+      dragged = true;
+      if (e.cancelable) e.preventDefault();
+      track.style.transition = 'none';
+      track.style.transform = 'translateX(' + (baseX + dx / frameScale) + 'px)';
+    }, { passive: false });
+
+    function endDrag(e) {
+      if (!dragging || (e && e.pointerId !== pointerId)) return;
+      dragging = false;
+      root.classList.remove('is-dragging');
+      if (!decided) { track.style.transition = ''; return; }
+      var dx = (e.clientX - startX) / frameScale;
+      setActive(Math.round(-(baseX + dx) / step));
+      setTimeout(function () { dragged = false; }, 0);
+    }
+
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+
+    /* --- горизонтальное колесо и тачпад --- */
+
+    var wheelAcc = 0, wheelLock = false;
+
+    root.addEventListener('wheel', function (e) {
+      if (!enabled) return;
+      // Вертикальное колесо — скролл страницы, не наше дело
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (e.cancelable) e.preventDefault();
+      if (wheelLock) return;
+      wheelAcc += e.deltaX;
+      if (Math.abs(wheelAcc) > 40) {
+        setActive(active + (wheelAcc > 0 ? 1 : -1));
+        wheelAcc = 0;
+        wheelLock = true;
+        setTimeout(function () { wheelLock = false; }, 260);
+      }
+    }, { passive: false });
+
+    panelEl.appendChild(root);
+
+    // Первичная расстановка не считается взаимодействием, иначе подсказка
+    // погасла бы, не успев показаться
+    setActive(0);
+    used = false;
+    if (hintEl) hintEl.classList.remove('is-gone');
+
+    var api = {
+      stopIndex: stop.index,
+      move: function (d) { if (enabled) setActive(active + d); },
+      isEnabled: function () { return enabled; },
+      setEnabled: function (on) {
+        if (enabled === on) return;
+        enabled = on;
+        root.classList.toggle('is-enabled', on);
+      }
+    };
+    galleryByStop[stop.index] = api;
+    return api;
+  }
 
   /* ---------- Разметка ассетов ---------- */
 
@@ -99,6 +280,10 @@
       img.loading = stop.index < 2 ? 'eager' : 'lazy';
       img.decoding = 'async';
       el.appendChild(img);
+    }
+
+    if (stop.gallery) {
+      galleries.push(buildGallery(el, stop));
     }
 
     overlays.appendChild(el);
@@ -273,6 +458,11 @@
       }
 
       p.style.visibility = inside ? 'visible' : 'hidden';
+
+      // Галерея живёт только пока её ассет читается: иначе можно было бы
+      // случайно перелистнуть вещи, проскакивая раздел мимо
+      var gal = galleryByStop[h.index];
+      if (gal) gal.setEnabled(inside && Math.abs(phase) < 0.01);
     }
 
     var ratio = totalScroll > 0 ? y / totalScroll : 0;
@@ -384,6 +574,17 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      for (var gi = 0; gi < galleries.length; gi++) {
+        if (!galleries[gi].isEnabled()) continue;
+        galleries[gi].move(e.key === 'ArrowRight' ? 1 : -1);
+        e.preventDefault();
+        return;
+      }
+      return;
+    }
+
     var key = e.key.toLowerCase();
 
     if (key === 'd') { hudOn = !hudOn; hud.hidden = !hudOn; }
