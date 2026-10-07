@@ -21,7 +21,7 @@ window.TIMELINE = {
     // а исходник отдаётся в 23.976 — трогать это число не нужно.
     fps: 30,
     // Запасная длительность — до того, как браузер прочитает метаданные.
-    fallbackDuration: 25.09
+    fallbackDuration: 25.53
   },
 
   scroll: {
@@ -100,33 +100,33 @@ window.TIMELINE = {
       name: 'framework',
       image: 'assets/images/01. framework. 00_00 – 03_00.png',
       from: '00_00',
-      to:   '03_00'
+      to:   '03_18'
     },
     {
       name: 'course',
       image: 'assets/images/02. course. 05_00 – 06_00.png',
-      from: '05_00',
-      to:   '06_00'
+      from: '05_10',
+      to:   '08_00'
     },
     {
       name: 'book',
       image: 'assets/images/03. book. 07_20 – 09_00.png',
-      from: '07_20',
-      to:   '09_00'
+      from: '09_15',
+      to:   '11_10'
     },
     {
       name: 'reviews',
       image: 'assets/images/04. reviews. 11_20 – 14_00.png',
-      from: '11_20',
-      to:   '13_00'
+      from: '13_24',
+      to:   '14_17'
     },
     {
       // На секунду позже прежнего: на 14_00 в кадре ещё доезжала карта,
       // теперь плашка целиком попадает на гонку (14_20 – 16_05)
       name: 'conference',
       image: 'assets/images/05. conference. 15_00 – 16_06.png',
-      from: '15_00',
-      to:   '16_05'
+      from: '16_19',
+      to:   '17_20'
     },
     {
       // Заголовок «ОДЕЖДА» лежит ассетом, вещи сверху — горизонтальной
@@ -134,8 +134,8 @@ window.TIMELINE = {
       // как раз под неё.
       name: 'clothes',
       image: 'assets/images/06. clothes. 17_18 – 19_15.png',
-      from: '16_20',
-      to:   '18_16',
+      from: '18_05',
+      to:   '19_17',
 
       // Дольше обычной остановки: внутри галерея, на неё нужно время.
       // Заодно это удлиняет окно, в котором галерея вообще активна.
@@ -177,7 +177,7 @@ window.TIMELINE = {
       // раньше плашка успевала показаться ещё на флаге
       name: 'about',
       image: 'assets/images/07. about. 21_04 – 26_00.png',
-      from: '21_12',
+      from: '22_07',
       to:   '26_00'
     }
   ]
